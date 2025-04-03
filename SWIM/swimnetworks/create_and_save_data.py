@@ -23,7 +23,29 @@ def generate_and_save_mat(filename, N_t=100, N_x=100,t_range=(0, 1), x_range=(-1
     #usol = np.maximum(2+X+1.5*T-30,-X-0.75*T+15)  # Shape (N_x, N_t)
     #usol = np.exp(-(((X)**2)/7)-(((T-20)**2)/10))
     #usol = (np.exp(0.1*X+0.2*(T-10)))+5*(np.sin(X**2))/(T**2+1)
-    usol = (1/5)*(X**2)
+    #usol = (1/5)*(X**2)
+    """
+    scale_factor=0.6
+    mean_1_x,mean_1_t=20*scale_factor, 5*scale_factor+20
+    mean_2_x, mean_2_t = -20 * scale_factor, 20 * scale_factor + 20
+    mean_3_x, mean_3_t = -3 * scale_factor, -20 * scale_factor + 20
+    sigma = 1.2
+    #usol = 3*np.exp(-(((X-mean_1_x) ** 2) / 0.2) - (((T - mean_1_t) ** 2) / 0.2))+np.exp(-(((X-mean_2_x) ** 2) / 0.2) - (((T - mean_2_t) ** 2) / 0.2))+2*np.exp(-(((X-mean_3_x) ** 2) / 0.2) - (((T - mean_3_t) ** 2) / 0.2))
+    usol = 3*np.exp(-(((X-mean_1_x) ** 2) / sigma) - (((T - mean_1_t) ** 2) / sigma))+2*np.exp(-(((X-mean_2_x) ** 2) / (10*sigma)) - (((T - mean_2_t) ** 2) / (10*sigma)))+2*np.exp(-(((X-mean_3_x) ** 2) / sigma) - (((T - mean_3_t) ** 2) / sigma))
+    """
+
+    """
+    #Locus=np.sin(0.1*X)+np.cos(0.05*T)-0.5*np.sin(0.02*X*T)
+    Locus=0.8*T+0.6*X-16
+    compression_factor=0.5 #loose 5 times
+    sigma=Locus*compression_factor
+    usol=np.where(sigma<=0,np.sin(6*sigma),5+0.5*sigma*np.cos(6*sigma))
+    """
+    Locus = 0.8 * T + 0.6 * X - 16
+    compression_factor = 0.5
+    sigma = Locus*compression_factor
+    usol=np.exp(sigma**2/200)*np.cos(6*sigma)
+
     # Step 4: Save the data to a `.mat` file
     data_dict = {
         "t": t,  # (N_t, 1)
@@ -37,5 +59,5 @@ def generate_and_save_mat(filename, N_t=100, N_x=100,t_range=(0, 1), x_range=(-1
 
 
 # Example: Save a custom `.mat` file
-generate_and_save_mat("../../rational_neural_network/RationalNets/src/Approximation/Data/parabolic.mat",
+generate_and_save_mat("../../rational_neural_network/RationalNets/src/Approximation/Data/butterfly.mat",
                       N_t=300,N_x=300,t_range=(0,40), x_range=(-20, 20))

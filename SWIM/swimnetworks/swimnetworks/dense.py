@@ -5,6 +5,7 @@ from typing import Callable, Union
 import numpy as np
 from scipy.spatial import KDTree
 
+from memory_profiler import profile
 from .base import Base
 
 @dataclass
@@ -24,18 +25,19 @@ class Dense(Base):
         self.n_pruned_neurons = 0
 
         if not isinstance(self.parameter_sampler, Callable):
-            if self.parameter_sampler == "relu_1st_grd" or self.parameter_sampler == "relu_like_rat":
-                self.parameter_sampler = self.sample_parameters_relu_1st_grd
-                self.probability_evaluator=None
+            if self.parameter_sampler == "relu":
+                self.parameter_sampler = self.sample_parameters_act
             elif self.parameter_sampler == "relu_2nd_grd":
                 self.parameter_sampler = self.sample_parameters_relu_2nd_grd
                 self.probability_evaluator=self.middle_point_slope_difference_probability_evaluator
             elif self.parameter_sampler == "tanh":
-                self.parameter_sampler = self.sample_parameters_tanh
+                self.parameter_sampler = self.sample_parameters_act
             elif self.parameter_sampler == "random":
                 self.parameter_sampler = self.sample_parameters_randomly
             elif self.parameter_sampler == "rat":
-                self.parameter_sampler = self.sample_parameters_rat
+                self.parameter_sampler = self.sample_parameters_act
+            elif self.parameter_sampler == "sigmoid":
+                self.parameter_sampler = self.sample_parameters_act
             elif self.parameter_sampler == "relu_like_rat_news1s2":
                 self.parameter_sampler = self.sample_parameters_rat_news1s2
             elif self.parameter_sampler == "gaussian":
@@ -46,36 +48,38 @@ class Dense(Base):
             elif self.parameter_sampler == "wavy_rat":
                 self.parameter_sampler = self.sample_parameters_wavy_rat
                 self.probability_evaluator=self.y_sum_probability_evaluator
+            elif self.parameter_sampler == "adpt_rat" or self.parameter_sampler == "adpt_relu" or self.parameter_sampler == "adpt_sigmoid" or self.parameter_sampler == "adpt_tanh":
+                self.parameter_sampler = self.sample_parameters_act
             else:
                 raise ValueError(f"Unknown parameter sampler {self.parameter_sampler}.")
 
-    def fit(self, x, y=None):
+    def fit(self, x, y=None,error_map=None,candidate_sets:np.ndarray=None):
         if self.layer_width is None:
             raise ValueError("layer_width must be set.")
         
         x, y = self.clean_inputs(x, y)
+
         rng = np.random.default_rng(self.random_seed)
+        self.weights, self.biases, self.idx_from, self.idx_to = self.parameter_sampler(x, y, rng=rng,candidate_sets=candidate_sets,error_map=error_map)
 
-        weights, biases, idx_from, idx_to = self.parameter_sampler(x, y, rng)
 
-        self.idx_from = idx_from
-        self.idx_to = idx_to
-        self.weights = weights
-        self.biases = biases
-
-        self.n_parameters = np.prod(weights.shape) + np.prod(biases.shape)
+        self.n_parameters = np.prod(self.weights.shape) + np.prod(self.biases.shape)
         return self
 
-    def sample_parameters_tanh(self, x, y, rng):
+    def fit_transform(self, x, y=None,error_map=None,candidate_sets:np.ndarray=None):
+        self.fit(x, y,error_map=error_map,candidate_sets=candidate_sets)
+        return self.transform(x, y)
+
+    def sample_parameters_tanh(self, x, y, rng,candidate_sets,error_map):
         scale = 0.5 * (np.log(1 + 1/2) - np.log(1 - 1/2))
 
-        directions, dists, idx_from, idx_to = self.sample_parameters(x, y, rng)
+        directions, dists, idx_from, idx_to = self.sample_parameters(x, y, rng,candidate_sets,error_map)
         weights = (2 * scale * directions / dists).T
         biases = -np.sum(x[idx_from, :] * weights.T, axis=-1).reshape(1, -1) - scale
 
         return weights, biases, idx_from, idx_to
 
-    def sample_parameters_relu_1st_grd(self, x, y, rng):
+    def sample_parameters_relu_1st_grd(self, x, y, rng,candidate_sets):
         scale = 1.0
 
         directions, dists, idx_from, idx_to = self.sample_parameters(x, y, rng)
@@ -85,7 +89,7 @@ class Dense(Base):
         return weights, biases, idx_from, idx_to
 
         
-    def sample_parameters_rat(self, x, y, rng):
+    def sample_parameters_rat(self, x, y, rng,candidate_sets):
         #this is the w and b sampler function for rational func. simply copy of relu
         x1x2=[]
         with open("GD_Results/Rational/layers1/width"+str(self.layer_width)+"/x1x2.txt", "r") as f:
@@ -100,7 +104,7 @@ class Dense(Base):
 
         return weights, biases, idx_from, idx_to
 
-    def sample_parameters_peaky_rat(self,x,y,rng):
+    def sample_parameters_peaky_rat(self, x, y, rng,candidate_sets):
         #sample parameters for multi-peak rational functions
         #default by 3 peaks
         selected_point_sets=self.sample_point_sets_with_probability(x,y,rng,3)
@@ -114,7 +118,7 @@ class Dense(Base):
 
         return weights, biases, idx_from, idx_to
 
-    def sample_parameters_wavy_rat(self,x,y,rng):
+    def sample_parameters_wavy_rat(self, x, y, rng,candidate_sets):
         selected_point_sets = self.sample_point_sets_with_probability(x, y, rng, 3)
         M=selected_point_sets.shape[0]
         #find w and b for affine transformation so that wx+b for the 3 xs align with the peak value
@@ -147,7 +151,7 @@ class Dense(Base):
 
     #2nd gradient oriented sample for relu
 
-    def sample_parameters_relu_2nd_grd(self,x,y,rng):
+    def sample_parameters_relu_2nd_grd(self, x, y, rng,candidate_sets):
         selected_point_sets = self.sample_point_sets_with_probability(x, y, rng, 2)
         #place the relu where x1 is 1,x2 is -1
         x1=x[selected_point_sets[:,0]] #(M,2)
@@ -167,7 +171,7 @@ class Dense(Base):
         return weights, biases, idx_from, idx_to
 
 
-    def sample_parameters_rat_after_GD(self, x, y, rng):
+    def sample_parameters_rat_after_GD(self, x, y, rng,candidate_sets):
         # this is the w and b sampler function for rational func. simply copy of relu
         scale = 1.0
 
@@ -177,7 +181,7 @@ class Dense(Base):
 
         return weights, biases, idx_from, idx_to
 
-    def sample_parameters_rat_news1s2 (self, x, y, rng):
+    def sample_parameters_rat_news1s2 (self, x, y, rng,candidate_sets):
         #this is the w and b sampler function for rational func. This is the intuitive s1 s2 design for relu like rat.
         scale = 0.875
 
@@ -187,7 +191,7 @@ class Dense(Base):
 
         return weights, biases, idx_from, idx_to
     
-    def sample_parameters_randomly(self, x, _, rng):
+    def sample_parameters_randomly(self, x, y, rng,candidate_sets):
         weights = rng.normal(loc=0, scale=1, size=(self.layer_width, x.shape[1])).T
         biases = rng.uniform(low=-np.pi, high=np.pi, size=(self.layer_width, 1)).T
         idx0 = None
@@ -213,7 +217,7 @@ class Dense(Base):
 
 
 
-    def sample_parameters(self, x, y, rng):
+    def sample_parameters(self, x, y, rng,candidate_sets,error_map):
         """
         Sample directions from points to other points in the given dataset (x, y).
         """
@@ -264,7 +268,7 @@ class Dense(Base):
 
 
 
-    def sample_parameters_gaussian(self,x,y,rng):
+    def sample_parameters_gaussian(self, x, y, rng,candidate_sets):
         remaining_indices=np.arange(x.shape[0])
         y_prime=y-np.min(y)
         p=y_prime/np.sum(y_prime)
@@ -325,6 +329,8 @@ class Dense(Base):
 
 
 
+    def sample_parameters_act(self,x,y,rng=None,candidate_sets=None,error_map=None):
+        return self.act.parameter_calculator(x,y,self.layer_width,self.repetition_scaler,rng=rng,candidate_sets=candidate_sets,error_map=error_map)
 
 
 

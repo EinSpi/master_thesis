@@ -10,6 +10,8 @@ import random
 import argparse
 from scipy.interpolate import griddata
 from plotting import newfig, savefig
+from swim_model import SwimModel
+
 
 if __name__ == "__main__":
 	parser = argparse.ArgumentParser()
@@ -18,6 +20,8 @@ if __name__ == "__main__":
 	parser.add_argument("--repeat_times", type=int, default=0)
 	parser.add_argument("--act", type=str, default="relu")
 	parser.add_argument("--objective", type=str, default="KdV_sine")
+	parser.add_argument("--experiment_name", type=str, default="experiment")
+	parser.add_argument("--feed_back", type=int, default=0)
 	args, _ = parser.parse_known_args()
 
 	#prepare swim model with rat function
@@ -26,13 +30,45 @@ if __name__ == "__main__":
 	times=args.repeat_times
 	act=args.act
 	objective=args.objective
+	experiment_name=args.experiment_name
+	feed_back=args.feed_back
 	sample_uniformly=False
-	layers=[w for i in range(l)]
-	steps=[]
-	for k_layer in range(len(layers)):
-		steps.append((f"fcn{k_layer+1}", Dense(layer_width=w, layer_idx= k_layer, layer_num=l ,activation=act,parameter_sampler=act,sample_uniformly=sample_uniformly,random_seed=42)))
-	steps.append(("lin", Linear(regularization_scale=1e-10)))
-	model = Pipeline(steps)
+	swim_model=SwimModel(w=w,l=l,feed_back=feed_back,feed_back_factor=2,act=act)
+
+	"""
+	model=[]
+	if not feed_back:
+		layers=[w for i in range(l)]
+		steps=[]
+		for k_layer in range(len(layers)):
+			steps.append((f"fcn{k_layer+1}", Dense(layer_width=w, layer_idx= k_layer, layer_num=l ,activation=act,parameter_sampler=act,sample_uniformly=sample_uniformly,random_seed=42)))
+		steps.append(("lin", Linear(regularization_scale=1e-10)))
+		model = Pipeline(steps)
+	else:
+		width_per_subnetwork=w//8
+		width_last_subnetwork=w%8
+		layers = [width_per_subnetwork for i in range(l)]
+		layers_last_subnetwork=[width_last_subnetwork for i in range(l)]
+		if not width_per_subnetwork==0:
+			for i in range(8):
+				steps=[]
+				for k_layer in range(len(layers)):
+					steps.append((f"fcn{k_layer + 1}",Dense(layer_width=width_per_subnetwork, layer_idx=k_layer, layer_num=l, activation=act, parameter_sampler=act,sample_uniformly=sample_uniformly, random_seed=42)))
+				steps.append(("lin", Linear(regularization_scale=1e-10)))
+				model.append(Pipeline(steps))
+
+		if not width_last_subnetwork==0:
+			steps = []
+			for k_layer in range(len(layers)):
+				steps.append((f"fcn{k_layer + 1}", Dense(layer_width=width_last_subnetwork, layer_idx=k_layer, layer_num=l, activation=act,parameter_sampler=act, sample_uniformly=sample_uniformly,random_seed=42)))
+			steps.append(("lin", Linear(regularization_scale=1e-10)))
+			model.append(Pipeline(steps))
+	"""
+
+
+
+
+
 
 
 	def l2_error_relative(f_approx, f_true):
@@ -67,12 +103,12 @@ if __name__ == "__main__":
 	u_idn_star = Exact_idn.flatten()[:,None]
 
 	# Create results folder
-	if not os.path.exists("Results/"+"obj_"+objective+"/"+"act_"+act+"/layers%d/width%d/" % (len(layers),layers[0])):
-		os.makedirs("Results/"+"obj_"+objective+"/"+"act_"+act+"/layers%d/width%d/" % (len(layers),layers[0]))
+	if not os.path.exists("Results/"+experiment_name+"/obj_"+objective+"/act_"+act+"/fdbk_%d/layers%d/width%d/" % (feed_back,l,w)):
+		os.makedirs("Results/"+experiment_name+"/obj_"+objective+"/act_"+act+"/fdbk_%d/layers%d/width%d/" % (feed_back,l,w))
 
 	# Save exact as CSV file
-	np.savetxt("Results/"+"obj_"+objective+"/"+"act_"+act+"/domain.csv" , X_idn_star, delimiter=',')
-	np.savetxt("Results/"+"obj_"+objective+"/"+"act_"+act+"/exact_sol.csv" , Exact_idn, delimiter=',')
+	np.savetxt("Results/"+experiment_name+"/"+"obj_"+objective+"/domain.csv" , X_idn_star, delimiter=',')
+	np.savetxt("Results/"+experiment_name+"/"+"obj_"+objective+"/exact_sol.csv" , Exact_idn, delimiter=',')
 
 	### Training Data ###
 
@@ -96,27 +132,52 @@ if __name__ == "__main__":
 
 
 	#train
+	"""
+	if not feed_back:
+		model.fit(X_train, U_train)
+	else:
+		for i in range(len(model)):
+			if i==0:
+				model[i].fit(X_train, U_train,error_map=None)
+			else:
+				hidden_layer=np.hstack([model[j].named_steps['fcn1'].transform(X_train) for j in range(i)])
+				#prepare inputs as convention fit in linear
+				if len(hidden_layer.shape) > 2:
+					hidden_layer = hidden_layer.reshape(hidden_layer.shape[0], -1)
+				if len(U_train.shape) < 2:
+					U_train = U_train.reshape(-1, 1)
+				hidden_layer = np.column_stack([hidden_layer, np.ones((hidden_layer.shape[0], 1))])
+				w_and_b_linear = np.linalg.lstsq(hidden_layer, U_train, rcond=1e-8)[0]
+				result=hidden_layer@w_and_b_linear
+				error_map=np.abs(result-U_train)
+				model[i].fit(X_train, U_train,error_map=error_map)
 
-	model.fit(X_train, U_train)
+
+			probability_advisor=model[i].named_steps['fcn1'].transform(X_train)
+	"""
+	swim_model.fit(X_train, U_train)
 
 	#infer,and evaluate
+	"""
 	callable_model= lambda x: model.transform(x)
+	"""
+	callable_model=lambda  x:swim_model.transform(x)
 	u_pred_identifier=callable_model(X_idn_star)
 	#compute mse and rel l2 loss
 	mean_squared_error=mse(u_pred_identifier,u_idn_star)
 	rel_l2_error=l2_error_relative(u_pred_identifier,u_idn_star)
-	print('Mean Squared Error: %e' % mean_squared_error)
-	print('Relative l2 Error: %e' % rel_l2_error)
-	with open("Results/"+"obj_"+objective+"/"+"act_"+act+"/layers%d/width%d/errors.txt" % (len(layers),layers[0]), "a") as f:
+	#print('Mean Squared Error: %e' % mean_squared_error)
+	#print('Relative l2 Error: %e' % rel_l2_error)
+	with open("Results/"+experiment_name+"/"+"obj_"+objective+"/"+"act_"+act+"/fdbk_%d/layers%d/width%d/errors.txt" % (feed_back,l,w), "a") as f:
 		f.write("MSE: %e, rel.L2: %e\n" % (mean_squared_error, rel_l2_error))
-	print("wrote SWIM err to file")
+	#print("wrote SWIM err to file")
 
 
 
 	U_pred = griddata(X_idn_star, u_pred_identifier.flatten(), (T_idn, X_idn), method='cubic')
 
 	# Save identifier as CSV file
-	#np.savetxt("Results/"+act+"/layers%d/width%d/idn_rat_repeat%d.csv" % (len(layers),layers[0],times) , U_pred, delimiter=',')
+	#np.savetxt("Results/"+experiment_name+"/"+act+"/layers%d/width%d/idn_rat_repeat%d.csv" % (len(layers),layers[0],times) , U_pred, delimiter=',')
 
 	######################################################################
 	############################# Plotting ###############################
@@ -167,6 +228,6 @@ if __name__ == "__main__":
 	ax.set_ylabel('$x$')
 	ax.set_title('Error', fontsize=10)
 
-	savefig("Results/"+"obj_"+objective+"/"+"act_"+act+"/layers%d/width%d/swim_repeat%d" % (len(layers),layers[0],times))
+	savefig("Results/"+experiment_name+"/"+"obj_"+objective+"/"+"act_"+act+"/fdbk_%d/layers%d/width%d/swim_repeat%d" % (feed_back,l,w,times))
 
 

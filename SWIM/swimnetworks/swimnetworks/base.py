@@ -5,6 +5,12 @@ from dataclasses import dataclass
 from typing import Callable, Tuple, Union
 import numpy as np
 from sklearn.base import BaseEstimator
+#from .adpt_wavy_rat import AdaptiveWavyRat
+#from .adpt_relu import AdptRelu
+#from .adpt_single_peak_wavy_rat import AdptSinglePeakWayRat
+#from .adpt_tanh import AdptTanh
+from .adpt_acts import AdptRat,AdptSigmoid,AdptRelu,AdptTanh
+from .acts import Rat,Sigmoid,Relu,Tanh
 
 
 @dataclass
@@ -29,7 +35,6 @@ class Base(BaseEstimator, ABC):
     @staticmethod
     def relu_activation(x):
         res=np.maximum(x, 0)
-        #print(res.shape)
         return res
 
 
@@ -51,7 +56,6 @@ class Base(BaseEstimator, ABC):
         coeff=1/b_exp
         exp_term=np.exp(-sq_distance/(2*b_exp))
         result=coeff*exp_term
-        print(result.shape)
         return result
 
     def peaky_rat(self,x: np.ndarray):
@@ -91,13 +95,13 @@ class Base(BaseEstimator, ABC):
 
 
 
-    def rat_activation_generator(self):
+    def rat_activation_generator(self,x:np.ndarray):
         with open("GD_Results/Rational/layers%d/width%d/rat_coeffsP.txt" % (self.layer_num, self.layer_width), "r") as f1:
             coeffsP=[float(line.strip()) for line in f1]
         with open("GD_Results/Rational/layers%d/width%d/rat_coeffsQ.txt" % (self.layer_num, self.layer_width), "r") as f2:
             coeffsQ=[float(line.strip()) for line in f2]
 
-        return lambda x : np.divide(np.polyval(coeffsP[self.layer_idx:self.layer_idx+4].copy(),x),np.polyval(coeffsQ[self.layer_idx:self.layer_idx+3].copy(),x))
+        return np.divide(np.polyval(coeffsP[self.layer_idx:self.layer_idx+4].copy(),x),np.polyval(coeffsQ[self.layer_idx:self.layer_idx+3].copy(),x))
 
     
     
@@ -108,12 +112,18 @@ class Base(BaseEstimator, ABC):
         if not isinstance(self.activation, Callable):
             if self.activation == "none" or self.activation is None:
                 self.activation = Base.identity_activation
-            elif self.activation == "relu_1st_grd" or self.activation == "relu_2nd_grd":
-                self.activation = Base.relu_activation
+            elif self.activation == "relu":
+                self.act = Relu(sample_uniformly=False)
+                self.activation = self.act.infer
             elif self.activation == "tanh":
-                self.activation = Base.tanh_activation
+                self.act = Tanh(sample_uniformly=False)
+                self.activation = self.act.infer
             elif self.activation == "rat":
-                self.activation = self.rat_activation_generator()
+                self.act = Rat(sample_uniformly=False)
+                self.activation = self.act.infer
+            elif self.activation == "sigmoid":
+                self.act = Sigmoid(sample_uniformly=False)
+                self.activation = self.act.infer
             elif self.activation == "relu_like_rat":
                 self.activation = Base.reluLike_rat_activation
             elif self.activation == "relu_like_rat_news1s2":
@@ -124,6 +134,18 @@ class Base(BaseEstimator, ABC):
                 self.activation = self.peaky_rat
             elif self.activation == "wavy_rat":
                 self.activation = Base.wavy_rat
+            elif self.activation == "adpt_rat":
+                self.act = AdptRat(sample_uniformly=False,min_a_para=0,max_a_para=40,num_neighbors=10)
+                self.activation = self.act.infer
+            elif self.activation == "adpt_relu":
+                self.act = AdptRelu(sample_uniformly=False,min_a_para=0.01, max_a_para=10,num_neighbors=10)
+                self.activation = self.act.infer
+            elif self.activation == "adpt_sigmoid":
+                self.act = AdptSigmoid(sample_uniformly=False,min_a_para=0.01, max_a_para=10,num_neighbors=10)
+                self.activation = self.act.infer
+            elif self.activation == "adpt_tanh":
+                self.act = AdptTanh(sample_uniformly=False,min_a_para=0, max_a_para=40,num_neighbors=20)
+                self.activation = self.act.infer
             else:
                 raise ValueError(f"Unknown activation {self.activation}.")
 
@@ -139,7 +161,6 @@ class Base(BaseEstimator, ABC):
         if self.activation == self.gaussian_act or self.activation == self.peaky_rat:
             result = self.activation(x)
         else:
-            print(self.weights.shape)
             result = self.activation(x @ self.weights + self.biases)
         return result
 
